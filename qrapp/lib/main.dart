@@ -14,7 +14,41 @@ class App extends StatelessWidget {
   const App({super.key});
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(debugShowCheckedModeBanner: false, home: Loader());
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+        brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(
+          primary: Colors.white,
+          secondary: Colors.white,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.black,
+          elevation: 0,
+          centerTitle: true,
+          titleTextStyle: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+          iconTheme: IconThemeData(color: Colors.white),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white10,
+          labelStyle: const TextStyle(color: Colors.white70),
+          hintStyle: const TextStyle(color: Colors.white54),
+          border: OutlineInputBorder(borderSide: BorderSide.none, borderRadius: BorderRadius.circular(6)),
+        ),
+        textTheme: ThemeData.dark().textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
+      ),
+      home: const Loader(),
+    );
   }
 }
 
@@ -85,29 +119,32 @@ class _SetupPageState extends State<SetupPage> {
             TextField(
               controller: socketCtrl,
               decoration: const InputDecoration(labelText: "Socket Address"),
+              style: const TextStyle(color: Colors.white),
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: idCtrl,
               decoration: const InputDecoration(labelText: "Scanner ID"),
+              style: const TextStyle(color: Colors.white),
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: timeoutCtrl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: "Duplicate Timeout (sec)",
               ),
+              style: const TextStyle(color: Colors.white),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: save, child: const Text("Save & Start")),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(onPressed: save, child: const Text("Start")),
+            ),
             const Spacer(),
             const Text(
               "For Campfire checkins",
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              "Made with silliness by Muhammad Ali :>",
-              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
             ),
           ],
         ),
@@ -127,6 +164,7 @@ class _ScannerPageState extends State<ScannerPage> {
   bool authenticated = false;
   String status = "Connecting...";
   WebSocketChannel? channel;
+  final MobileScannerController cameraController = MobileScannerController();
 
   final Map<String, DateTime> lastScans = {};
   int timeoutSeconds = 15;
@@ -137,6 +175,8 @@ class _ScannerPageState extends State<ScannerPage> {
   void initState() {
     super.initState();
     connect();
+    // Start in standby (paused) until user enables scanning
+    cameraController.stop();
   }
 
   Future<Map<String, dynamic>> getMetadata() async {
@@ -243,7 +283,14 @@ class _ScannerPageState extends State<ScannerPage> {
   @override
   Widget build(BuildContext context) {
     if (!authenticated) {
-      return Scaffold(body: Center(child: Text(status)));
+      return Scaffold(
+        body: Center(
+          child: Text(
+            status,
+            style: const TextStyle(color: Colors.white70, fontSize: 16),
+          ),
+        ),
+      );
     }
 
     return Scaffold(
@@ -252,20 +299,28 @@ class _ScannerPageState extends State<ScannerPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.code),
-            onPressed: () =>
-                launchUrl(Uri.parse("https://github.com/Alimadcorp/campfiremanage")),
+            onPressed: () => launchUrl(Uri.parse("https://github.com/Alimadcorp/campfiremanage")),
           ),
         ],
       ),
       body: Column(
         children: [
           SwitchListTile(
-            title: const Text("Enable"),
+            title: const Text("Enable", style: TextStyle(color: Colors.white)),
             value: enabled,
-            onChanged: (v) => setState(() => enabled = v),
+            activeColor: Colors.white,
+            onChanged: (v) {
+              setState(() => enabled = v);
+              if (v) {
+                cameraController.start();
+              } else {
+                cameraController.stop();
+              }
+            },
           ),
           Expanded(
             child: MobileScanner(
+              controller: cameraController,
               onDetect: (barcodeCapture) {
                 if (!enabled) return;
 
@@ -276,6 +331,26 @@ class _ScannerPageState extends State<ScannerPage> {
               },
             ),
           ),
+          if (!enabled)
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SetupPage()),
+                    );
+                  },
+                  child: const Text('Setup'),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -284,6 +359,7 @@ class _ScannerPageState extends State<ScannerPage> {
   @override
   void dispose() {
     channel?.sink.close();
+    cameraController.dispose();
     super.dispose();
   }
 }
