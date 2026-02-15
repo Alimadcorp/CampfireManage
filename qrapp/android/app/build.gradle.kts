@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.company.example"
+    namespace = "com.example.qrapp"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 

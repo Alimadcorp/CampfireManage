@@ -126,7 +126,7 @@ class _ScannerPageState extends State<ScannerPage> {
   bool enabled = false;
   bool authenticated = false;
   String status = "Connecting...";
-  late WebSocketChannel channel;
+  WebSocketChannel? channel;
 
   final Map<String, DateTime> lastScans = {};
   int timeoutSeconds = 15;
@@ -164,26 +164,45 @@ class _ScannerPageState extends State<ScannerPage> {
 
   void connect() async {
     final prefs = await SharedPreferences.getInstance();
-    socket = prefs.getString('socket')!;
+    socket = prefs.getString('socket') ?? '';
     scannerId = prefs.getString('scannerId') ?? "";
     timeoutSeconds = prefs.getInt('timeout') ?? 15;
 
-    channel = WebSocketChannel.connect(Uri.parse(socket));
+    if (socket.isEmpty) {
+      if (!mounted) return;
+      setState(() => status = "No socket configured");
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const SetupPage()),
+      );
+      return;
+    }
 
-    channel.stream.listen(
+    try {
+      channel = WebSocketChannel.connect(Uri.parse(socket));
+    } catch (e) {
+      setState(() => status = "Connection failed");
+      return;
+    }
+
+    channel?.stream.listen(
       (message) {
-        final data = jsonDecode(message);
-        if (data['type'] == 'auth') {
-          if (data['status'] == 'success') {
-            setState(() {
-              authenticated = true;
-              status = "Connected";
-            });
-          } else {
-            setState(() {
-              status = "Auth failed";
-            });
+        try {
+          final data = jsonDecode(message);
+          if (data['type'] == 'auth') {
+            if (data['status'] == 'success') {
+              setState(() {
+                authenticated = true;
+                status = "Connected";
+              });
+            } else {
+              setState(() {
+                status = "Auth failed";
+              });
+            }
           }
+        } catch (_) {
+          // ignore malformed messages
         }
       },
       onError: (_) {
@@ -193,7 +212,7 @@ class _ScannerPageState extends State<ScannerPage> {
 
     final meta = await getMetadata();
 
-    channel.sink.add(
+    channel?.sink.add(
       jsonEncode({
         "type": "auth",
         "password": "29678292",
@@ -211,7 +230,7 @@ class _ScannerPageState extends State<ScannerPage> {
 
     lastScans[value] = now;
 
-    channel.sink.add(
+    channel?.sink.add(
       jsonEncode({
         "type": "scan",
         "data": value,
@@ -264,7 +283,7 @@ class _ScannerPageState extends State<ScannerPage> {
 
   @override
   void dispose() {
-    channel.sink.close();
+    channel?.sink.close();
     super.dispose();
   }
 }
