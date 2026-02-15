@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scan Listener</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        display: flex;
+        height: 100vh;
+        background: #111;
+        color: #eee;
+      }
+      #main {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+      }
+      #sidebar {
+        width: 220px;
+        background: #222;
+        border-left: 1px solid #444;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+      .scan {
+        margin-bottom: 5px;
+        padding: 5px;
+        border-radius: 3px;
+      }
+      .scan .time {
+        color: grey;
+        font-size: 0.9em;
+        margin-right: 5px;
+      }
+      .scan .scanner {
+        color: cyan;
+        margin-right: 5px;
+      }
+      .scan.new {
+        border-left: 3px solid #0f0;
+      }
+      button {
+        margin: 2px 0;
+        padding: 3px 5px;
+        background: #333;
+        color: #eee;
+        border: none;
+        cursor: pointer;
+      }
+      button.active {
+        background: #555;
+      }
+      #sidebar h3 {
+        margin: 5px 0;
+        font-size: 1em;
+      }
+      #sidebar ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        flex: 1;
+        overflow-y: auto;
+      }
+      #sidebar li {
+        padding: 2px 0;
+      }
+      a {
+        color: yellow;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="main"></div>
+
+    <div id="sidebar">
+      <h3>Filters</h3>
+      <button id="toggleNew" class="active">New</button>
+      <button id="toggleAll">All</button>
+      <button id="toggleData">Data-only</button>
+      <button id="toggleInfo" class="active">All info</button>
+      <h3>Online Scanners</h3>
+      <ul id="online"></ul>
+    </div>
+
+    <script>
+      const main = document.getElementById("main");
+      const onlineList = document.getElementById("online");
+      const toggleNew = document.getElementById("toggleNew");
+      const toggleAll = document.getElementById("toggleAll");
+      const toggleData = document.getElementById("toggleData");
+      const toggleInfo = document.getElementById("toggleInfo");
+
+      let scans = [];
+      let showNew = true;
+      let dataOnly = false;
+
+      const ws = new WebSocket("wss://ws.campfire.alimad.co");
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "auth", password: "listenerpass" }));
+      };
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.type === "scan") {
+          data._new = true;
+          scans.unshift(data);
+          renderScans();
+        }
+        if (data.type === "online_devices") {
+          renderOnline(data.devices);
+        }
+      };
+
+      function renderScans() {
+        main.innerHTML = "";
+        scans.forEach((scan) => {
+          if (showNew && !scan._new) return;
+          const div = document.createElement("div");
+          div.className = "scan" + (scan._new ? " new" : "");
+          const content = dataOnly
+            ? scan.data
+            : `${scan.time} <span class="scanner">${scan.scannerId}</span> ${scan.data}`;
+          div.innerHTML = content;
+          if (scan.link) {
+            const a = document.createElement("a");
+            a.href = scan.link;
+            a.target = "_blank";
+            a.textContent = " [open]";
+            div.appendChild(a);
+          }
+          main.appendChild(div);
+          scan._new = false;
+        });
+      }
+
+      function renderOnline(devices) {
+        onlineList.innerHTML = "";
+        devices.forEach((d) => {
+          const li = document.createElement("li");
+          li.textContent = d;
+          onlineList.appendChild(li);
+        });
+      }
+
+      toggleNew.onclick = () => {
+        showNew = true;
+        toggleNew.classList.add("active");
+        toggleAll.classList.remove("active");
+        renderScans();
+      };
+      toggleAll.onclick = () => {
+        showNew = false;
+        toggleAll.classList.add("active");
+        toggleNew.classList.remove("active");
+        renderScans();
+      };
+      toggleData.onclick = () => {
+        dataOnly = true;
+        toggleData.classList.add("active");
+        toggleInfo.classList.remove("active");
+        renderScans();
+      };
+      toggleInfo.onclick = () => {
+        dataOnly = false;
+        toggleInfo.classList.add("active");
+        toggleData.classList.remove("active");
+        renderScans();
+      };
+    </script>
+  </body>
+</html>
