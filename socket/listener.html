@@ -100,7 +100,7 @@
 
       const ws = new WebSocket("wss://ws.campfire.alimad.co");
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: "auth", password: "listenerpass" }));
+        ws.send(JSON.stringify({ type: "auth", password: "24908812" }));
       };
       ws.onmessage = (msg) => {
         const data = JSON.parse(msg.data);
