@@ -120,10 +120,17 @@
           if (showNew && !scan._new) return;
           const div = document.createElement("div");
           div.className = "scan" + (scan._new ? " new" : "");
+
+          // Build content with time, scanner IP/user and optional packet num
+          const scannerLabel = scan.ip || scan.scannerId || "unknown";
+          const numLabel = scan.num != null ? ` <strong style="color:yellow">#${scan.num}</strong>` : "";
           const content = dataOnly
             ? scan.data
-            : `${scan.time} <span class="scanner">${scan.scannerId}</span> ${scan.data}`;
+            : `${scan.time} <span class="scanner">${scannerLabel}</span>${numLabel} ${scan.data}`;
+
           div.innerHTML = content;
+
+          // Add open link if available
           if (scan.link) {
             const a = document.createElement("a");
             a.href = scan.link;
@@ -131,6 +138,24 @@
             a.textContent = " [open]";
             div.appendChild(a);
           }
+
+          // If we have a packet num, add a Resend button
+          if (scan.num != null) {
+            const btn = document.createElement("button");
+            btn.textContent = "Resend";
+            btn.onclick = () => {
+              try {
+                ws.send(JSON.stringify({ type: "resend_request", scannerId: scannerLabel, num: scan.num }));
+                btn.textContent = "Requested";
+                btn.disabled = true;
+                setTimeout(() => { btn.textContent = "Resend"; btn.disabled = false; }, 3000);
+              } catch (e) {
+                btn.textContent = "Error";
+              }
+            };
+            div.appendChild(btn);
+          }
+
           main.appendChild(div);
           scan._new = false;
         });

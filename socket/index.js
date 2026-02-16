@@ -78,18 +78,57 @@ wss.on("connection", (ws, req) => {
         color: data.color || "grey",
       };
 
-      console.log(`${color(record.time, "grey")} ${color(userScannerId, "cyan")} (${color(clientIp, "blue")}): ${color(record.data, record.color)}`);
+      const num = Number.isInteger(data.num) ? data.num : (typeof data.num === 'string' && /^[0-9]+$/.test(data.num) ? parseInt(data.num, 10) : null);
+      if (num !== null) record.num = num;
 
-      // Store scan permanently
+      console.log(`${color(record.time, "grey")} ${color(userScannerId, "cyan")} (${color(clientIp, "blue")}): ${color(record.data, record.color)}${num!==null?(' #'+num):''}`);
+
+      // If packet has a num, store it in a per-scanner hash so we can resend later
+      if (num !== null) {
+        const packetKey = `scanner:${clientIp}:packets`;
+        const existing = await redis.hget(packetKey, `${num}`);
+        if (!existing) {
+          await redis.hset(packetKey, `${num}`, JSON.stringify(record));
+        }
+      }
+
+      // Store scan permanently (timeline)
       await redis.rpush("scanned_codes", JSON.stringify(record));
 
       // Update session scan count for this IP
       await redis.hincrby(`scanner:${clientIp}`, "current_session_scans", 1);
 
-      // Broadcast to listeners
+      // Broadcast to listeners (include num if present)
       listeners.forEach((l) => {
         if (l.readyState === WebSocket.OPEN) l.send(JSON.stringify({ type: "scan", ...record }));
       });
+
+      // Send acknowledgement back to the scanner if it provided a num
+      if (num !== null) {
+        try {
+          ws.send(JSON.stringify({ type: "received", num: num, status: "success" }));
+        } catch (err) {
+          // ignore
+        }
+      }
+    }
+
+    // Listeners can request a resend of a particular packet num from a scanner
+    if (role === "listener" && data.type === "resend_request") {
+      const target = data.scannerId || data.ip;
+      const reqNum = data.num;
+      if (!target || reqNum == null) {
+        ws.send(JSON.stringify({ type: "resend_forwarded", status: "error", message: "missing scannerId or num" }));
+        return;
+      }
+      const scannerWs = scanners.get(target);
+      if (scannerWs && scannerWs.readyState === WebSocket.OPEN) {
+        scannerWs.send(JSON.stringify({ type: "resend", num: reqNum }));
+        ws.send(JSON.stringify({ type: "resend_forwarded", status: "ok", scannerId: target, num: reqNum }));
+      } else {
+        // If the scanner is not directly connected under that key, try to lookup by IP list
+        ws.send(JSON.stringify({ type: "resend_forwarded", status: "not_found", scannerId: target }));
+      }
     }
   });
 
