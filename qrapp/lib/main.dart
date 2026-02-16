@@ -166,6 +166,12 @@ class _ScannerPageState extends State<ScannerPage> {
   WebSocketChannel? channel;
   final MobileScannerController cameraController = MobileScannerController();
 
+  // Packet ID state and sent history
+  int nextNum = 1;
+  final Map<int, String> sentHistory = {};
+  int? lastSentNum;
+  bool showFlash = false;
+
   final Map<String, DateTime> lastScans = {};
   int timeoutSeconds = 15;
   String scannerId = "";
@@ -207,6 +213,18 @@ class _ScannerPageState extends State<ScannerPage> {
     socket = prefs.getString('socket') ?? '';
     scannerId = prefs.getString('scannerId') ?? "";
     timeoutSeconds = prefs.getInt('timeout') ?? 15;
+    nextNum = prefs.getInt('nextNum') ?? 1;
+
+    final histJson = prefs.getString('sentHistory');
+    if (histJson != null) {
+      try {
+        final decoded = jsonDecode(histJson) as Map<String, dynamic>;
+        decoded.forEach((k, v) {
+          final key = int.tryParse(k);
+          if (key != null && v is String) sentHistory[key] = v;
+        });
+      } catch (_) {}
+    }
 
     if (socket.isEmpty) {
       if (!mounted) return;
@@ -229,7 +247,8 @@ class _ScannerPageState extends State<ScannerPage> {
       (message) {
         try {
           final data = jsonDecode(message);
-          if (data['type'] == 'auth') {
+          final t = data['type'];
+          if (t == 'auth') {
             if (data['status'] == 'success') {
               setState(() {
                 authenticated = true;
@@ -239,6 +258,37 @@ class _ScannerPageState extends State<ScannerPage> {
               setState(() {
                 status = "Auth failed";
               });
+            }
+          } else if (t == 'resend') {
+            // Server asks us to resend a particular packet
+            final num = data['num'];
+            if (num is int && sentHistory.containsKey(num)) {
+              final value = sentHistory[num]!;
+              channel?.sink.add(jsonEncode({
+                "type": "scan",
+                "data": value,
+                "time": DateTime.now().toIso8601String(),
+                "scannerId": scannerId,
+                "num": num,
+              }));
+            }
+          } else if (t == 'received') {
+            // Acknowledgement from server for a sent packet
+            final num = data['num'];
+            final statusResp = data['status'];
+            if (num is int && statusResp == 'success') {
+              // Optionally remove from history
+              sentHistory.remove(num);
+              // Persist updated history
+              final mapToStore = <String, String>{};
+              for (final e in sentHistory.entries) {
+                mapToStore['${e.key}'] = e.value;
+              }
+              prefs.setString('sentHistory', jsonEncode(mapToStore));
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Server received packet #$num')),
+              );
             }
           }
         } catch (_) {
@@ -262,7 +312,7 @@ class _ScannerPageState extends State<ScannerPage> {
     );
   }
 
-  void sendScan(String value) {
+  void sendScan(String value) async {
     final now = DateTime.now();
     final last = lastScans[value];
 
@@ -270,14 +320,38 @@ class _ScannerPageState extends State<ScannerPage> {
 
     lastScans[value] = now;
 
+    final prefs = await SharedPreferences.getInstance();
+
+    final num = nextNum;
+    // store in memory and persist history
+    sentHistory[num] = value;
+    nextNum = nextNum + 1;
+    await prefs.setInt('nextNum', nextNum);
+    final mapToStore = <String, String>{};
+    for (final e in sentHistory.entries) {
+      mapToStore['${e.key}'] = e.value;
+    }
+    await prefs.setString('sentHistory', jsonEncode(mapToStore));
+
     channel?.sink.add(
       jsonEncode({
         "type": "scan",
         "data": value,
         "time": now.toIso8601String(),
         "scannerId": scannerId,
+        "num": num,
       }),
     );
+
+    setState(() {
+      lastSentNum = num;
+      showFlash = true;
+    });
+
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      setState(() => showFlash = false);
+    });
   }
 
   @override
@@ -301,10 +375,26 @@ class _ScannerPageState extends State<ScannerPage> {
             icon: const Icon(Icons.code),
             onPressed: () => launchUrl(Uri.parse("https://github.com/Alimadcorp/campfiremanage")),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 12.0),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                lastSentNum != null ? '#${lastSentNum}' : '-',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           SwitchListTile(
             title: const Text("Enable", style: TextStyle(color: Colors.white)),
             value: enabled,
@@ -347,10 +437,26 @@ class _ScannerPageState extends State<ScannerPage> {
                       MaterialPageRoute(builder: (_) => const SetupPage()),
                     );
                   },
-                  child: const Text('Setup'),
+                  child: const Text('Back'),
                 ),
               ),
             ),
+            ],
+          ),
+
+          // Flash overlay when a code is scanned
+          Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: showFlash ? 0.45 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: true,
+                child: Container(
+                  color: showFlash ? Colors.greenAccent.withOpacity(0.25) : Colors.transparent,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
