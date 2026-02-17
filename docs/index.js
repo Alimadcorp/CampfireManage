@@ -5,7 +5,7 @@ const SCANNER_PASSWORD = "29678292";
 const LISTENER_PASSWORD = "24908812";
 const wss = new WebSocket.Server({ port: 8080 });
 
-const redis = new Redis(process.env.UPSTASH_REDIS_URL);
+const redis = new Redis(process.env.UPSTASH_REDIS_URL || "rediss://default:AbfZAAIncDI3NDBkMzhlNDA5MjQ0YjIwYmE2ZWZkMjY3YTI4ZTEyMnAyNDcwNjU@well-newt-47065.upstash.io:6379");
 
 const scanners = new Map(); // Store { ws, metadata }
 const listeners = new Set();
@@ -151,7 +151,6 @@ wss.on("connection", (ws, req) => {
         scannerId: userScannerId,
         ip: clientIp,
         data: data.data || "",
-        color: data.color || "grey",
         scannerInfo: currentMetadata
       };
 
@@ -193,6 +192,7 @@ wss.on("connection", (ws, req) => {
   ws.on("close", async () => {
     if (role === "scanner") {
       scanners.delete(clientIp);
+      broadcastOnlineDevices();
       try {
         const stats = await redis.hgetall(`scanner:${clientIp}`);
         if (stats && Object.keys(stats).length > 0) {
@@ -209,7 +209,6 @@ wss.on("connection", (ws, req) => {
         console.error("Redis Error (Close):", e.message);
       }
       console.log(color(`Scanner Disconnected | User: ${userScannerId} | IP: ${clientIp}`, "red"));
-      broadcastOnlineDevices();
     } else if (role === "listener") {
       listeners.delete(ws);
       broadcastListenerCount();
