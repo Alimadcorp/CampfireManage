@@ -120,15 +120,15 @@
 
     .check-all-btn {
       grid-column: span 2;
-      margin-top: 0.5rem;
       border-style: dashed;
+      display: none;
       color: var(--success);
     }
 
     #stream {
       flex: 1;
       overflow-y: auto;
-      padding: 1.5rem;
+      padding: 0.6rem;
       display: flex;
       flex-direction: column;
       gap: 0.6rem;
@@ -138,7 +138,7 @@
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0.8rem;
+      padding: 0.4rem;
       position: relative;
     }
 
@@ -146,7 +146,7 @@
       display: flex;
       justify-content: space-between;
       font-size: 0.65rem;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0rem;
     }
 
     .card-user {
@@ -167,7 +167,7 @@
     }
 
     .card-actions {
-      margin-top: 0.6rem;
+      margin-top: 0rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -176,14 +176,16 @@
     .status-label {
       font-size: 0.6rem;
       font-weight: 900;
+      margin-top: 0.2rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
 
     .mini-btn {
-      padding: 0.2rem 0.6rem;
+      padding: 0;
+      margin: 0;
       font-size: 0.6rem;
-      border-color: #222;
+      border: none;
       color: var(--accent);
     }
 
@@ -224,7 +226,7 @@
       position: absolute;
       right: calc(100% + 1rem);
       top: 50%;
-      transform: translateY(-50%);
+      transform: translateY(-100%);
       background: #000;
       border: 1px solid var(--border);
       padding: 1rem;
@@ -308,6 +310,8 @@
     let scans = [];
     let showHistory = false;
     let ws;
+    let lastIps = [];
+    let lastMeta = {};
 
     const stream = document.getElementById("stream");
     const scannersEl = document.getElementById("scanners");
@@ -340,7 +344,11 @@
             if (!d) return;
             if (d.type === "scan") add(d, true);
             else if (d.type === "history") (d.scans || []).forEach(s => add(s, false));
-            else if (d.type === "online_devices") updateScanners(d.devices || [], d.metadataMap || {});
+            else if (d.type === "online_devices") {
+              lastIps = d.devices || [];
+              lastMeta = d.metadataMap || {};
+              updateScanners(lastIps, lastMeta);
+            }
             else if (d.type === "listener_count") if (lCount) lCount.textContent = d.count;
           } catch (e) {
             console.error("Payload Parse Error:", e);
@@ -381,8 +389,6 @@
       if (!it || !it.time) return;
       it._isNew = !!isNew;
       it._status = it._status || "idle";
-
-      // Dedupe history
       if (!isNew && scans.some(s => s.time === it.time && s.data === it.data)) return;
 
       scans.unshift(it);
@@ -438,6 +444,8 @@
       if (typeof lucide !== 'undefined') {
         try { lucide.createIcons(); } catch (e) { }
       }
+
+      updateScanners(lastIps, lastMeta);
     }
 
     setInterval(render, 30000);
@@ -447,18 +455,15 @@
       if (it) check(it);
     };
 
-    const checkAllBtn = document.getElementById("checkAll");
-    if (checkAllBtn) {
-      checkAllBtn.onclick = () => {
-        scans.filter(s => (showHistory || s._isNew) && (s._status === "idle" || s._status === "error")).forEach(s => check(s));
-      };
-    }
-
     function updateScanners(ips, meta) {
       if (!scannersEl) return;
       scannersEl.innerHTML = "";
       (ips || []).forEach(ip => {
         const m = meta[ip] || {};
+        const scannerScans = scans.filter(s => s.ip === ip);
+        const totalCount = scannerScans.length;
+        const sessionCount = scannerScans.filter(s => s._isNew).length;
+
         const el = document.createElement("div");
         el.className = "scanner";
         el.innerHTML = `
@@ -467,15 +472,25 @@
           <div class="tooltip">
             <div style="font-size:0.6rem; font-weight:900; color:var(--accent); margin-bottom:0.6rem">DEVICE INFO</div>
             <div class="tooltip-data">
-              <div class="tt-row"><span class="tt-label">Hardware</span><span>${m.name || m.model || '?'}</span></div>
-              <div class="tt-row"><span class="tt-label">System</span><span>${m.androidVersion || '?'}</span></div>
-              <div class="tt-row"><span class="tt-label">App</span><span>${m.appVersion || '?'}</span></div>
-              <div class="tt-row"><span class="tt-label">Session</span><span>${m.current_session_scans || 0}</span></div>
+              <div class="tt-row"><span class="tt-label">Brand</span><span>${m.brand || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">Model</span><span>${m.model || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">SDK</span><span>${m.sdkInt || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">Connected</span><span>${timeago.format(new Date(m.last_connected)) || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">Scans</span><span>${sessionCount}</span></div>
+              <div class="tt-row"><span class="tt-label">Total Scans</span><span>${totalCount}</span></div>
             </div>
           </div>
         `;
         scannersEl.appendChild(el);
       });
+    }
+
+    const checkAllBtn = document.getElementById("checkAll");
+    if (checkAllBtn) {
+      checkAllBtn.onclick = () => {
+        checkAllBtn.style.display = "none";
+        scans.filter(s => (showHistory || s._isNew) && (s._status === "idle" || s._status === "error")).forEach(s => check(s));
+      };
     }
 
     const modeNew = document.getElementById("modeNew");
@@ -484,11 +499,13 @@
     if (modeNew) modeNew.onclick = () => {
       showHistory = false;
       modeNew.classList.add("active");
+      checkAllBtn.style.display = "none";
       if (modeAll) modeAll.classList.remove("active");
       render();
     };
     if (modeAll) modeAll.onclick = () => {
       showHistory = true;
+      checkAllBtn.style.display = "block";
       modeAll.classList.add("active");
       if (modeNew) modeNew.classList.remove("active");
       render();
