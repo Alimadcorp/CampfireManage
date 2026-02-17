@@ -96,11 +96,46 @@ class _SetupPageState extends State<SetupPage> {
   final idCtrl = TextEditingController();
   final timeoutCtrl = TextEditingController(text: "15");
 
-  void save() async {
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  void load() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('socket', socketCtrl.text.trim());
-    await prefs.setString('scannerId', idCtrl.text.trim());
-    await prefs.setInt('timeout', int.parse(timeoutCtrl.text.trim()));
+    setState(() {
+      socketCtrl.text = prefs.getString('socket') ?? "ws://192.168.10.23:8080";
+      idCtrl.text = prefs.getString('scannerId') ?? "";
+      timeoutCtrl.text = (prefs.getInt('timeout') ?? 15).toString();
+    });
+  }
+
+  void save() async {
+    final socket = socketCtrl.text.trim();
+    final id = idCtrl.text.trim();
+    final timeoutStr = timeoutCtrl.text.trim();
+
+    if (socket.isEmpty || id.isEmpty || timeoutStr.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill all fields"), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    final timeout = int.tryParse(timeoutStr);
+    if (timeout == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Timeout must be a number"), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('socket', socket);
+    await prefs.setString('scannerId', id);
+    await prefs.setInt('timeout', timeout);
+    
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
@@ -139,11 +174,23 @@ class _SetupPageState extends State<SetupPage> {
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton(onPressed: save, child: const Text("Start")),
+              child: ElevatedButton(onPressed: save, child: const Text("Start Scanning")),
             ),
             const Spacer(),
+            InkWell(
+              onTap: () => launchUrl(Uri.parse("https://github.com/Alimadcorp/campfiremanage")),
+              child: const Text(
+                "Source Code",
+                style: TextStyle(fontSize: 13, decoration: TextDecoration.underline, color: Colors.blueAccent),
+              ),
+            ),
+            const SizedBox(height: 8),
             const Text(
-              "For Campfire checkins, made by Muhammad Ali",
+              "For Campfire Checkins,",
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white60),
+            ),
+            const Text(
+              "Made with Silliness by Muhammad Ali :>",
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
             ),
           ],
@@ -166,7 +213,6 @@ class _ScannerPageState extends State<ScannerPage> {
   WebSocketChannel? channel;
   final MobileScannerController cameraController = MobileScannerController();
 
-  // Packet ID state and sent history
   int nextNum = 1;
   final Map<int, String> sentHistory = {};
   int? lastSentNum;
@@ -181,7 +227,6 @@ class _ScannerPageState extends State<ScannerPage> {
   void initState() {
     super.initState();
     connect();
-    // Start in standby (paused) until user enables scanning
     cameraController.stop();
   }
 
@@ -238,8 +283,10 @@ class _ScannerPageState extends State<ScannerPage> {
 
     try {
       channel = WebSocketChannel.connect(Uri.parse(socket));
+      await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
-      setState(() => status = "Connection failed");
+      if (!mounted) return;
+      setState(() => status = "Connection failed: $e");
       return;
     }
 
@@ -284,7 +331,7 @@ class _ScannerPageState extends State<ScannerPage> {
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Copied #$num to clipboard'),
+                  content: Text('#$num sent'),
                   backgroundColor: Colors.green,
                   duration: const Duration(seconds: 1),
                 )
