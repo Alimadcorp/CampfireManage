@@ -287,16 +287,6 @@ class _ScannerPageState extends State<ScannerPage> {
                   content: Text('Copied #$num to clipboard'),
                   backgroundColor: Colors.green,
                   duration: const Duration(seconds: 1),
-                  action: SnackBarAction(
-                    label: 'Copy',
-                    textColor: Colors.white,
-                    onPressed: () {
-                      if (sentHistory.containsKey(num)) {
-                        final Clipboard = import('dart:ui').Clipboard;
-                        Clipboard.setData(ClipboardData(text: sentHistory[num]!));
-                      }
-                    },
-                  ),
                 )
               );
             }
