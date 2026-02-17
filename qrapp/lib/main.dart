@@ -143,7 +143,7 @@ class _SetupPageState extends State<SetupPage> {
             ),
             const Spacer(),
             const Text(
-              "For Campfire checkins",
+              "For Campfire checkins, made by Muhammad Ali",
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: Colors.white70),
             ),
           ],
@@ -260,7 +260,6 @@ class _ScannerPageState extends State<ScannerPage> {
               });
             }
           } else if (t == 'resend') {
-            // Server asks us to resend a particular packet
             final num = data['num'];
             if (num is int && sentHistory.containsKey(num)) {
               final value = sentHistory[num]!;
@@ -273,13 +272,10 @@ class _ScannerPageState extends State<ScannerPage> {
               }));
             }
           } else if (t == 'received') {
-            // Acknowledgement from server for a sent packet
             final num = data['num'];
             final statusResp = data['status'];
             if (num is int && statusResp == 'success') {
-              // Optionally remove from history
               sentHistory.remove(num);
-              // Persist updated history
               final mapToStore = <String, String>{};
               for (final e in sentHistory.entries) {
                 mapToStore['${e.key}'] = e.value;
@@ -287,12 +283,25 @@ class _ScannerPageState extends State<ScannerPage> {
               prefs.setString('sentHistory', jsonEncode(mapToStore));
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Server received packet #$num')),
+                SnackBar(
+                  content: Text('Copied #$num to clipboard'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 1),
+                  action: SnackBarAction(
+                    label: 'Copy',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      if (sentHistory.containsKey(num)) {
+                        final Clipboard = import('dart:ui').Clipboard;
+                        Clipboard.setData(ClipboardData(text: sentHistory[num]!));
+                      }
+                    },
+                  ),
+                )
               );
             }
           }
         } catch (_) {
-          // ignore malformed messages
         }
       },
       onError: (_) {
@@ -323,7 +332,6 @@ class _ScannerPageState extends State<ScannerPage> {
     final prefs = await SharedPreferences.getInstance();
 
     final num = nextNum;
-    // store in memory and persist history
     sentHistory[num] = value;
     nextNum = nextNum + 1;
     await prefs.setInt('nextNum', nextNum);
@@ -369,7 +377,7 @@ class _ScannerPageState extends State<ScannerPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("QR Scanner"),
+        title: const Text("Quick Stream"),
         actions: [
           IconButton(
             icon: const Icon(Icons.code),
@@ -444,7 +452,6 @@ class _ScannerPageState extends State<ScannerPage> {
             ],
           ),
 
-          // Flash overlay when a code is scanned
           Positioned.fill(
             child: AnimatedOpacity(
               opacity: showFlash ? 0.45 : 0.0,
