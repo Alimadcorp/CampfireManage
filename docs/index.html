@@ -1,199 +1,504 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Scan Listener</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: sans-serif;
-        display: flex;
-        height: 100vh;
-        background: #111;
-        color: #eee;
-      }
-      #main {
-        flex: 1;
-        overflow-y: auto;
-        padding: 10px;
-      }
-      #sidebar {
-        width: 220px;
-        background: #222;
-        border-left: 1px solid #444;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-      }
-      .scan {
-        margin-bottom: 5px;
-        padding: 5px;
-        border-radius: 3px;
-      }
-      .scan .time {
-        color: grey;
-        font-size: 0.9em;
-        margin-right: 5px;
-      }
-      .scan .scanner {
-        color: cyan;
-        margin-right: 5px;
-      }
-      .scan.new {
-        border-left: 3px solid #0f0;
-      }
-      button {
-        margin: 2px 0;
-        padding: 3px 5px;
-        background: #333;
-        color: #eee;
-        border: none;
-        cursor: pointer;
-      }
-      button.active {
-        background: #555;
-      }
-      #sidebar h3 {
-        margin: 5px 0;
-        font-size: 1em;
-      }
-      #sidebar ul {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        flex: 1;
-        overflow-y: auto;
-      }
-      #sidebar li {
-        padding: 2px 0;
-      }
-      a {
-        color: yellow;
-        text-decoration: none;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="main"></div>
 
-    <div id="sidebar">
-      <h3>Filters</h3>
-      <button id="toggleNew" class="active">New</button>
-      <button id="toggleAll">All</button>
-      <button id="toggleData">Data-only</button>
-      <button id="toggleInfo" class="active">All info</button>
-      <h3>Online Scanners</h3>
-      <ul id="online"></ul>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Campfire Engine</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/timeago.js/4.0.2/timeago.min.js"></script>
+  <style>
+    :root {
+      --bg: #000000;
+      --panel: #080808;
+      --card: #0c0c0e;
+      --accent: #3b82f6;
+      --success: #10b981;
+      --error: #f43f5e;
+      --text: #ffffff;
+      --text-dim: #444446;
+      --border: #141416;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #void {
+      flex: 1;
+    }
+
+    #engine {
+      width: 460px;
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      box-shadow: -10px 0 50px rgba(0, 0, 0, 0.9);
+    }
+
+    header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .logo {
+      font-size: 0.8rem;
+      font-weight: 900;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #fff;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
+    .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--error);
+      box-shadow: 0 0 5px var(--error);
+    }
+
+    .dot.on {
+      background: var(--success);
+      box-shadow: 0 0 5px var(--success);
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+
+    button:hover {
+      color: #fff;
+      border-color: #333;
+    }
+
+    button.active {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .check-all-btn {
+      grid-column: span 2;
+      margin-top: 0.5rem;
+      border-style: dashed;
+      color: var(--success);
+    }
+
+    #stream {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.8rem;
+      position: relative;
+    }
+
+    .card-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .card-user {
+      font-weight: 900;
+      color: #52525b;
+    }
+
+    .card-time {
+      color: var(--text-dim);
+    }
+
+    .card-data {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #ccc;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .card-actions {
+      margin-top: 0.6rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status-label {
+      font-size: 0.6rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .mini-btn {
+      padding: 0.2rem 0.6rem;
+      font-size: 0.6rem;
+      border-color: #222;
+      color: var(--accent);
+    }
+
+    #scanners-list {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .scanner {
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: help;
+      position: relative;
+    }
+
+    .scanner:hover {
+      background: #0c0c0e;
+    }
+
+    .scanner-name {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .scanner-ip {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+    }
+
+    .tooltip {
+      position: absolute;
+      right: calc(100% + 1rem);
+      top: 50%;
+      transform: translateY(-50%);
+      background: #000;
+      border: 1px solid var(--border);
+      padding: 1rem;
+      width: 240px;
+      border-radius: 8px;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: 0.15s;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+    }
+
+    .scanner:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .tooltip-data {
+      display: grid;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+    }
+
+    .tt-row {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .tt-label {
+      color: var(--text-dim);
+    }
+
+    ::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #111;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="void"></div>
+
+  <div id="engine">
+    <header>
+      <div class="top-bar">
+        <div class="logo">CAMPFIRE // ENG</div>
+        <div class="status">
+          <div id="dot" class="dot"></div>
+          <span id="stat-text">OFF</span>
+          <span style="opacity:0.1">|</span>
+          <i data-lucide="users" style="width:10px"></i>
+          <span id="l-count">0</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="modeNew" class="active">REALTIME</button>
+        <button id="modeAll">HISTORY</button>
+        <button id="checkAll" class="check-all-btn">VALIDATE ALL</button>
+      </div>
+    </header>
+
+    <div id="stream"></div>
+
+    <div id="scanners-list">
+      <div style="font-size: 0.6rem; font-weight: 900; color:var(--text-dim); margin-bottom: 0.5rem;">ONLINE</div>
+      <div id="scanners"></div>
     </div>
+  </div>
 
-    <script>
-      const main = document.getElementById("main");
-      const onlineList = document.getElementById("online");
-      const toggleNew = document.getElementById("toggleNew");
-      const toggleAll = document.getElementById("toggleAll");
-      const toggleData = document.getElementById("toggleData");
-      const toggleInfo = document.getElementById("toggleInfo");
+  <script>
+    window.onerror = (m, u, l, c, e) => {
+      console.warn("Recovered from engine error:", m);
+      return true;
+    };
 
-      let scans = [];
-      let showNew = true;
-      let dataOnly = false;
+    const API = "https://reflect.alimad.co/";
+    let scans = [];
+    let showHistory = false;
+    let ws;
 
-      const ws = new WebSocket("wss://ws.campfire.alimad.co");
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: "auth", password: "24908812" }));
-      };
-      ws.onmessage = (msg) => {
-        const data = JSON.parse(msg.data);
-        if (data.type === "scan") {
-          data._new = true;
-          scans.unshift(data);
-          renderScans();
-        }
-        if (data.type === "online_devices") {
-          renderOnline(data.devices);
-        }
-      };
+    const stream = document.getElementById("stream");
+    const scannersEl = document.getElementById("scanners");
+    const dot = document.getElementById("dot");
+    const statText = document.getElementById("stat-text");
+    const lCount = document.getElementById("l-count");
 
-      function renderScans() {
-        main.innerHTML = "";
-        scans.forEach((scan) => {
-          if (showNew && !scan._new) return;
-          const div = document.createElement("div");
-          div.className = "scan" + (scan._new ? " new" : "");
+    function connect() {
+      try {
+        const host = location.host.endsWith(":5500") ? "ws://localhost:8080" : "wss://ws.campfire.alimad.co";
+        ws = new WebSocket(host);
 
-          // Build content with time, scanner IP/user and optional packet num
-          const scannerLabel = scan.ip || scan.scannerId || "unknown";
-          const numLabel = scan.num != null ? ` <strong style="color:yellow">#${scan.num}</strong>` : "";
-          const content = dataOnly
-            ? scan.data
-            : `${scan.time} <span class="scanner">${scannerLabel}</span>${numLabel} ${scan.data}`;
+        ws.onopen = () => {
+          if (dot) dot.classList.add("on");
+          if (statText) statText.textContent = "LIVE";
+          ws.send(JSON.stringify({ type: "auth", password: "24908812" }));
+        };
 
-          div.innerHTML = content;
+        ws.onclose = () => {
+          if (dot) dot.classList.remove("on");
+          if (statText) statText.textContent = "OFFLINE";
+          setTimeout(connect, 3000);
+        };
 
-          // Add open link if available
-          if (scan.link) {
-            const a = document.createElement("a");
-            a.href = scan.link;
-            a.target = "_blank";
-            a.textContent = " [open]";
-            div.appendChild(a);
+        ws.onerror = (e) => console.error("Socket Error:", e);
+
+        ws.onmessage = (msg) => {
+          try {
+            const d = JSON.parse(msg.data);
+            if (!d) return;
+            if (d.type === "scan") add(d, true);
+            else if (d.type === "history") (d.scans || []).forEach(s => add(s, false));
+            else if (d.type === "online_devices") updateScanners(d.devices || [], d.metadataMap || {});
+            else if (d.type === "listener_count") if (lCount) lCount.textContent = d.count;
+          } catch (e) {
+            console.error("Payload Parse Error:", e);
           }
-
-          // If we have a packet num, add a Resend button
-          if (scan.num != null) {
-            const btn = document.createElement("button");
-            btn.textContent = "Resend";
-            btn.onclick = () => {
-              try {
-                ws.send(JSON.stringify({ type: "resend_request", scannerId: scannerLabel, num: scan.num }));
-                btn.textContent = "Requested";
-                btn.disabled = true;
-                setTimeout(() => { btn.textContent = "Resend"; btn.disabled = false; }, 3000);
-              } catch (e) {
-                btn.textContent = "Error";
-              }
-            };
-            div.appendChild(btn);
-          }
-
-          main.appendChild(div);
-          scan._new = false;
-        });
+        };
+      } catch (e) {
+        setTimeout(connect, 5000);
       }
+    }
 
-      function renderOnline(devices) {
-        onlineList.innerHTML = "";
-        devices.forEach((d) => {
-          const li = document.createElement("li");
-          li.textContent = d;
-          onlineList.appendChild(li);
-        });
+    async function check(it) {
+      if (!it.data || it._status === "checking" || it._status === "valid" || it._status === "invalid") return;
+
+      it._status = "checking";
+      render();
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s fetch cap
+
+      try {
+        const u = new URL(API);
+        u.searchParams.set("c", it.data);
+
+        const r = await fetch(u, { signal: controller.signal });
+        if (!r.ok) throw new Error("API Offline");
+
+        const res = await r.json();
+        it._status = res && res.status === "valid" ? "valid" : "invalid";
+      } catch (e) {
+        it._status = "error";
+      } finally {
+        clearTimeout(timeoutId);
+        render();
       }
+    }
 
-      toggleNew.onclick = () => {
-        showNew = true;
-        toggleNew.classList.add("active");
-        toggleAll.classList.remove("active");
-        renderScans();
+    function add(it, isNew) {
+      if (!it || !it.time) return;
+      it._isNew = !!isNew;
+      it._status = it._status || "idle";
+
+      // Dedupe history
+      if (!isNew && scans.some(s => s.time === it.time && s.data === it.data)) return;
+
+      scans.unshift(it);
+      if (scans.length > 200) scans.pop();
+      render();
+      if (isNew) check(it);
+    }
+
+    function render() {
+      if (!stream) return;
+      stream.innerHTML = "";
+
+      const filtered = scans.filter(s => showHistory || s._isNew);
+
+      filtered.forEach(s => {
+        const el = document.createElement("div");
+        el.className = "card";
+
+        const currentStatus = (s._status || "idle").toUpperCase();
+        let statusColor = "var(--text-dim)";
+        let action = `<button class="mini-btn" onclick="triggerCheck('${s.time}')">CHECK</button>`;
+
+        if (s._status === "checking") {
+          statusColor = "var(--accent)";
+          action = "";
+        } else if (s._status === "valid") {
+          statusColor = "var(--success)";
+          action = "";
+        } else if (s._status === "invalid") {
+          statusColor = "var(--error)";
+          action = "";
+        } else if (s._status === "error") {
+          statusColor = "var(--error)";
+          action = `<button class="mini-btn" onclick="triggerCheck('${s.time}')">RETRY</button>`;
+        }
+
+        const formattedTime = (typeof timeago !== 'undefined' && s.time) ? timeago.format(s.time) : (s.time ? new Date(s.time).toLocaleTimeString() : "?");
+
+        el.innerHTML = `
+          <div class="card-meta">
+            <span class="card-user">${s.scannerId || s.userId || "Client"}</span>
+            <span class="card-time">${formattedTime}</span>
+          </div>
+          <div class="card-data">${s.data || ""}</div>
+          <div class="card-actions">
+            <div class="status-label" style="color:${statusColor}">${s._status === 'checking' ? 'CHECKING...' : (s._status === 'valid' ? '✓ VALID' : (s._status === 'invalid' ? '✗ INVALID' : (s._status === 'error' ? 'FAILED' : currentStatus)))}</div>
+            ${action}
+          </div>
+        `;
+        stream.appendChild(el);
+      });
+
+      if (typeof lucide !== 'undefined') {
+        try { lucide.createIcons(); } catch (e) { }
+      }
+    }
+
+    setInterval(render, 30000);
+
+    window.triggerCheck = (time) => {
+      const it = scans.find(s => s.time === time);
+      if (it) check(it);
+    };
+
+    const checkAllBtn = document.getElementById("checkAll");
+    if (checkAllBtn) {
+      checkAllBtn.onclick = () => {
+        scans.filter(s => (showHistory || s._isNew) && (s._status === "idle" || s._status === "error")).forEach(s => check(s));
       };
-      toggleAll.onclick = () => {
-        showNew = false;
-        toggleAll.classList.add("active");
-        toggleNew.classList.remove("active");
-        renderScans();
-      };
-      toggleData.onclick = () => {
-        dataOnly = true;
-        toggleData.classList.add("active");
-        toggleInfo.classList.remove("active");
-        renderScans();
-      };
-      toggleInfo.onclick = () => {
-        dataOnly = false;
-        toggleInfo.classList.add("active");
-        toggleData.classList.remove("active");
-        renderScans();
-      };
-    </script>
-  </body>
+    }
+
+    function updateScanners(ips, meta) {
+      if (!scannersEl) return;
+      scannersEl.innerHTML = "";
+      (ips || []).forEach(ip => {
+        const m = meta[ip] || {};
+        const el = document.createElement("div");
+        el.className = "scanner";
+        el.innerHTML = `
+          <span class="scanner-name">${m.scanner_user_id || 'Terminal'}</span>
+          <span class="scanner-ip">${ip}</span>
+          <div class="tooltip">
+            <div style="font-size:0.6rem; font-weight:900; color:var(--accent); margin-bottom:0.6rem">DEVICE INFO</div>
+            <div class="tooltip-data">
+              <div class="tt-row"><span class="tt-label">Hardware</span><span>${m.name || m.model || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">System</span><span>${m.androidVersion || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">App</span><span>${m.appVersion || '?'}</span></div>
+              <div class="tt-row"><span class="tt-label">Session</span><span>${m.current_session_scans || 0}</span></div>
+            </div>
+          </div>
+        `;
+        scannersEl.appendChild(el);
+      });
+    }
+
+    const modeNew = document.getElementById("modeNew");
+    const modeAll = document.getElementById("modeAll");
+
+    if (modeNew) modeNew.onclick = () => {
+      showHistory = false;
+      modeNew.classList.add("active");
+      if (modeAll) modeAll.classList.remove("active");
+      render();
+    };
+    if (modeAll) modeAll.onclick = () => {
+      showHistory = true;
+      modeAll.classList.add("active");
+      if (modeNew) modeNew.classList.remove("active");
+      render();
+    };
+
+    connect();
+    if (typeof lucide !== 'undefined') {
+      try { lucide.createIcons(); } catch (e) { }
+    }
+  </script>
+</body>
+
 </html>
