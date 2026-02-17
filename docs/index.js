@@ -6,7 +6,7 @@ const LISTENER_PASSWORD = "24908812";
 const wss = new WebSocket.Server({ port: 8080 });
 
 // Use Upstash Redis URL + token
-const redis = new Redis(process.env.UPSTASH_REDIS_URL || "rediss://default:AbfZAAIncDI3NDBkMzhlNDA5MjQ0YjIwYmE2ZWZkMjY3YTI4ZTEyMnAyNDcwNjU@well-newt-47065.upstash.io:6379");
+const redis = new Redis(process.env.UPSTASH_REDIS_URL);
 
 let scanners = new Map();
 let listeners = new Set();
@@ -81,7 +81,7 @@ wss.on("connection", (ws, req) => {
       const num = Number.isInteger(data.num) ? data.num : (typeof data.num === 'string' && /^[0-9]+$/.test(data.num) ? parseInt(data.num, 10) : null);
       if (num !== null) record.num = num;
 
-      console.log(`${color(record.time, "grey")} ${color(userScannerId, "cyan")} (${color(clientIp, "blue")}): ${color(record.data, record.color)}${num!==null?(' #'+num):''}`);
+      console.log(`${color(record.time, "grey")} ${color(userScannerId, "cyan")} (${color(clientIp, "blue")}): ${color(record.data, record.color)}${num !== null ? (' #' + num) : ''}`);
 
       // If packet has a num, store it in a per-scanner hash so we can resend later
       if (num !== null) {
