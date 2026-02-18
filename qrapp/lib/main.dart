@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -206,9 +207,10 @@ class ScannerPage extends StatefulWidget {
   State<ScannerPage> createState() => _ScannerPageState();
 }
 
-class _ScannerPageState extends State<ScannerPage> {
+class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   bool enabled = false;
   bool authenticated = false;
+  bool connecting = false;
   String status = "Connecting...";
   WebSocketChannel? channel;
   final MobileScannerController cameraController = MobileScannerController();
@@ -218,6 +220,9 @@ class _ScannerPageState extends State<ScannerPage> {
   int? lastSentNum;
   bool showFlash = false;
 
+  int epochMillis = 0;
+  Timer? clockTimer;
+
   final Map<String, DateTime> lastScans = {};
   int timeoutSeconds = 15;
   String scannerId = "";
@@ -226,8 +231,22 @@ class _ScannerPageState extends State<ScannerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     connect();
     cameraController.stop();
+    epochMillis = DateTime.now().millisecondsSinceEpoch;
+    clockTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (!mounted) return;
+      setState(() => epochMillis = DateTime.now().millisecondsSinceEpoch);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-check config and reconnect when app resumes
+      connect();
+    }
   }
 
   Future<Map<String, dynamic>> getMetadata() async {
@@ -254,6 +273,11 @@ class _ScannerPageState extends State<ScannerPage> {
   }
 
   void connect() async {
+    if (!mounted) return;
+    setState(() {
+      connecting = true;
+      status = "Connecting...";
+    });
     final prefs = await SharedPreferences.getInstance();
     socket = prefs.getString('socket') ?? '';
     scannerId = prefs.getString('scannerId') ?? "";
@@ -273,11 +297,17 @@ class _ScannerPageState extends State<ScannerPage> {
 
     if (socket.isEmpty) {
       if (!mounted) return;
-      setState(() => status = "No socket configured");
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const SetupPage()),
-      );
+      setState(() {
+        connecting = false;
+        status = "No socket configured";
+      });
+      Future.microtask(() {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const SetupPage()),
+        );
+      });
       return;
     }
 
@@ -286,7 +316,17 @@ class _ScannerPageState extends State<ScannerPage> {
       await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
       if (!mounted) return;
-      setState(() => status = "Connection failed: $e");
+      setState(() {
+        connecting = false;
+        status = "Connection failed: $e";
+      });
+      Future.microtask(() {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const SetupPage()),
+        );
+      });
       return;
     }
 
@@ -297,13 +337,24 @@ class _ScannerPageState extends State<ScannerPage> {
           final t = data['type'];
           if (t == 'auth') {
             if (data['status'] == 'success') {
+              if (!mounted) return;
               setState(() {
+                connecting = false;
                 authenticated = true;
                 status = "Connected";
               });
             } else {
+              if (!mounted) return;
               setState(() {
+                connecting = false;
                 status = "Auth failed";
+              });
+              Future.microtask(() {
+                if (!mounted) return;
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SetupPage()),
+                );
               });
             }
           } else if (t == 'resend') {
@@ -342,7 +393,32 @@ class _ScannerPageState extends State<ScannerPage> {
         }
       },
       onError: (_) {
-        setState(() => status = "Connection error");
+        if (!mounted) return;
+        setState(() {
+          connecting = false;
+          status = "Connection error";
+        });
+        Future.microtask(() {
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const SetupPage()),
+          );
+        });
+      },
+      onDone: () {
+        if (!mounted) return;
+        setState(() {
+          connecting = false;
+          status = "Connection closed";
+        });
+        Future.microtask(() {
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const SetupPage()),
+          );
+        });
       },
     );
 
@@ -404,9 +480,57 @@ class _ScannerPageState extends State<ScannerPage> {
     if (!authenticated) {
       return Scaffold(
         body: Center(
-          child: Text(
-            status,
-            style: const TextStyle(color: Colors.white70, fontSize: 16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() => status = "Reconnecting...");
+                        connect();
+                      },
+                      child: const Text('Retry'),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton(
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SetupPage()),
+                        );
+                      },
+                      child: const Text('Settings'),
+                    ),
+                    const SizedBox(width: 12),
+                    TextButton(
+                      onPressed: () {
+                        // Allow cancelling while connecting
+                        try {
+                          channel?.sink.close();
+                        } catch (_) {}
+                        if (!mounted) return;
+                        setState(() => connecting = false);
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SetupPage()),
+                        );
+                      },
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -429,7 +553,7 @@ class _ScannerPageState extends State<ScannerPage> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                lastSentNum != null ? '#${lastSentNum}' : '-',
+                lastSentNum != null ? '#$lastSentNum' : '-',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
@@ -443,7 +567,7 @@ class _ScannerPageState extends State<ScannerPage> {
           SwitchListTile(
             title: const Text("Enable", style: TextStyle(color: Colors.white)),
             value: enabled,
-            activeColor: Colors.white,
+            activeThumbColor: Colors.white,
             onChanged: (v) {
               setState(() => enabled = v);
               if (v) {
@@ -489,6 +613,19 @@ class _ScannerPageState extends State<ScannerPage> {
             ],
           ),
 
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+              child: Text(
+                '$epochMillis',
+                style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+
           Positioned.fill(
             child: AnimatedOpacity(
               opacity: showFlash ? 0.45 : 0.0,
@@ -496,7 +633,7 @@ class _ScannerPageState extends State<ScannerPage> {
               child: IgnorePointer(
                 ignoring: true,
                 child: Container(
-                  color: showFlash ? Colors.greenAccent.withOpacity(0.25) : Colors.transparent,
+                  color: showFlash ? Colors.greenAccent.withAlpha(64) : Colors.transparent,
                 ),
               ),
             ),
@@ -510,6 +647,8 @@ class _ScannerPageState extends State<ScannerPage> {
   void dispose() {
     channel?.sink.close();
     cameraController.dispose();
+    clockTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }
