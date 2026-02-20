@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -94,6 +95,8 @@ class SetupPage extends StatefulWidget {
 class _SetupPageState extends State<SetupPage> {
   final socketCtrl = TextEditingController(text: "ws://YOUR_SERVER:8080");
   final idCtrl = TextEditingController();
+  final passwordCtrl = TextEditingController();
+  final channelCtrl = TextEditingController();
   final timeoutCtrl = TextEditingController(text: "15");
 
   @override
@@ -107,6 +110,8 @@ class _SetupPageState extends State<SetupPage> {
     setState(() {
       socketCtrl.text = prefs.getString('socket') ?? "ws://192.168.10.23:8080";
       idCtrl.text = prefs.getString('scannerId') ?? "";
+      passwordCtrl.text = prefs.getString('wsPassword') ?? "";
+      channelCtrl.text = prefs.getString('channel') ?? "";
       timeoutCtrl.text = (prefs.getInt('timeout') ?? 15).toString();
     });
   }
@@ -114,6 +119,8 @@ class _SetupPageState extends State<SetupPage> {
   void save() async {
     final socket = socketCtrl.text.trim();
     final id = idCtrl.text.trim();
+    final password = passwordCtrl.text.trim();
+    final channel = channelCtrl.text.trim();
     final timeoutStr = timeoutCtrl.text.trim();
 
     if (socket.isEmpty || id.isEmpty || timeoutStr.isEmpty) {
@@ -134,6 +141,8 @@ class _SetupPageState extends State<SetupPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('socket', socket);
     await prefs.setString('scannerId', id);
+    await prefs.setString('wsPassword', password);
+    await prefs.setString('channel', channel);
     await prefs.setInt('timeout', timeout);
     
     if (!mounted) return;
@@ -160,6 +169,19 @@ class _SetupPageState extends State<SetupPage> {
             TextField(
               controller: idCtrl,
               decoration: const InputDecoration(labelText: "Scanner ID"),
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: "WebSocket Password"),
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: channelCtrl,
+              decoration: const InputDecoration(labelText: "Channel ID"),
               style: const TextStyle(color: Colors.white),
             ),
             const SizedBox(height: 8),
@@ -206,9 +228,10 @@ class ScannerPage extends StatefulWidget {
   State<ScannerPage> createState() => _ScannerPageState();
 }
 
-class _ScannerPageState extends State<ScannerPage> {
+class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   bool enabled = false;
   bool authenticated = false;
+  bool connecting = false;
   String status = "Connecting...";
   WebSocketChannel? channel;
   final MobileScannerController cameraController = MobileScannerController();
@@ -218,6 +241,9 @@ class _ScannerPageState extends State<ScannerPage> {
   int? lastSentNum;
   bool showFlash = false;
 
+  int epochMillis = 0;
+  Timer? clockTimer;
+
   final Map<String, DateTime> lastScans = {};
   int timeoutSeconds = 15;
   String scannerId = "";
@@ -226,8 +252,21 @@ class _ScannerPageState extends State<ScannerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     connect();
     cameraController.stop();
+    epochMillis = DateTime.now().millisecondsSinceEpoch;
+    clockTimer = Timer.periodic(const Duration(milliseconds: 7), (_) {
+      if (!mounted) return;
+      setState(() => epochMillis = DateTime.now().millisecondsSinceEpoch);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      connect();
+    }
   }
 
   Future<Map<String, dynamic>> getMetadata() async {
@@ -246,6 +285,7 @@ class _ScannerPageState extends State<ScannerPage> {
         "sdkInt": android.version.sdkInt,
         "buildId": android.id,
         "fingerprint": android.fingerprint,
+        "ip": await _getLocalIpAddress(),
         "appVersion": pkg.version,
         "packageName": pkg.packageName,
       };
@@ -253,7 +293,25 @@ class _ScannerPageState extends State<ScannerPage> {
     return {};
   }
 
+  Future<String> _getLocalIpAddress() async {
+    try {
+      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          final ip = addr.address;
+          if (!ip.startsWith('127.') && ip.isNotEmpty) return ip;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
   void connect() async {
+    if (!mounted) return;
+    setState(() {
+      connecting = true;
+      status = "Connecting...";
+    });
     final prefs = await SharedPreferences.getInstance();
     socket = prefs.getString('socket') ?? '';
     scannerId = prefs.getString('scannerId') ?? "";
@@ -273,11 +331,17 @@ class _ScannerPageState extends State<ScannerPage> {
 
     if (socket.isEmpty) {
       if (!mounted) return;
-      setState(() => status = "No socket configured");
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const SetupPage()),
-      );
+      setState(() {
+        connecting = false;
+        status = "No socket configured";
+      });
+      Future.microtask(() {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const SetupPage()),
+        );
+      });
       return;
     }
 
@@ -286,7 +350,17 @@ class _ScannerPageState extends State<ScannerPage> {
       await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
       if (!mounted) return;
-      setState(() => status = "Connection failed: $e");
+      setState(() {
+        connecting = false;
+        status = "Connection failed: $e";
+      });
+      Future.microtask(() {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const SetupPage()),
+        );
+      });
       return;
     }
 
@@ -297,13 +371,28 @@ class _ScannerPageState extends State<ScannerPage> {
           final t = data['type'];
           if (t == 'auth') {
             if (data['status'] == 'success') {
+              if (!mounted) return;
               setState(() {
+                connecting = false;
                 authenticated = true;
                 status = "Connected";
               });
             } else {
+              final err = (data is Map && data.containsKey('error')) ? (data['error']?.toString() ?? 'Auth failed') : 'Auth failed';
+              if (!mounted) return;
               setState(() {
-                status = "Auth failed";
+                connecting = false;
+                status = err;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(err), backgroundColor: Colors.redAccent),
+              );
+              Future.microtask(() {
+                if (!mounted) return;
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SetupPage()),
+                );
               });
             }
           } else if (t == 'resend') {
@@ -342,17 +431,46 @@ class _ScannerPageState extends State<ScannerPage> {
         }
       },
       onError: (_) {
-        setState(() => status = "Connection error");
+        if (!mounted) return;
+        setState(() {
+          connecting = false;
+          status = "Connection error";
+        });
+        Future.microtask(() {
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const SetupPage()),
+          );
+        });
+      },
+      onDone: () {
+        if (!mounted) return;
+        setState(() {
+          connecting = false;
+          status = "Connection closed";
+        });
+        Future.microtask(() {
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const SetupPage()),
+          );
+        });
       },
     );
 
     final meta = await getMetadata();
+    final prefs2 = await SharedPreferences.getInstance();
+    final wsPassword = prefs2.getString('wsPassword') ?? '';
+    final channelId = prefs2.getString('channel') ?? '';
 
     channel?.sink.add(
       jsonEncode({
         "type": "auth",
-        "password": "29678292",
+        "password": wsPassword,
         "scannerId": scannerId,
+        "channel": channelId,
         "metadata": meta,
       }),
     );
@@ -404,9 +522,38 @@ class _ScannerPageState extends State<ScannerPage> {
     if (!authenticated) {
       return Scaffold(
         body: Center(
-          child: Text(
-            status,
-            style: const TextStyle(color: Colors.white70, fontSize: 16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        try {
+                          channel?.sink.close();
+                        } catch (_) {}
+                        if (!mounted) return;
+                        setState(() => connecting = false);
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SetupPage()),
+                        );
+                      },
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -429,7 +576,7 @@ class _ScannerPageState extends State<ScannerPage> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                lastSentNum != null ? '#${lastSentNum}' : '-',
+                lastSentNum != null ? '#$lastSentNum' : '-',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
@@ -443,7 +590,7 @@ class _ScannerPageState extends State<ScannerPage> {
           SwitchListTile(
             title: const Text("Enable", style: TextStyle(color: Colors.white)),
             value: enabled,
-            activeColor: Colors.white,
+            activeThumbColor: Colors.white,
             onChanged: (v) {
               setState(() => enabled = v);
               if (v) {
@@ -458,7 +605,6 @@ class _ScannerPageState extends State<ScannerPage> {
               controller: cameraController,
               onDetect: (barcodeCapture) {
                 if (!enabled) return;
-
                 for (final code in barcodeCapture.barcodes) {
                   final value = code.rawValue;
                   if (value != null) sendScan(value);
@@ -489,6 +635,19 @@ class _ScannerPageState extends State<ScannerPage> {
             ],
           ),
 
+          Positioned(
+            top: 64,
+            right: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+              child: Text(
+                '$epochMillis',
+                style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+
           Positioned.fill(
             child: AnimatedOpacity(
               opacity: showFlash ? 0.45 : 0.0,
@@ -496,7 +655,7 @@ class _ScannerPageState extends State<ScannerPage> {
               child: IgnorePointer(
                 ignoring: true,
                 child: Container(
-                  color: showFlash ? Colors.greenAccent.withOpacity(0.25) : Colors.transparent,
+                  color: showFlash ? Colors.greenAccent.withAlpha(64) : Colors.transparent,
                 ),
               ),
             ),
@@ -510,6 +669,8 @@ class _ScannerPageState extends State<ScannerPage> {
   void dispose() {
     channel?.sink.close();
     cameraController.dispose();
+    clockTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }
