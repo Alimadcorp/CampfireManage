@@ -6,7 +6,7 @@ const redis = new Redis(process.env.UPSTASH_REDIS_URL);
 
 // Parse channels from environment: CHANNELS="channel1:password1|channel2:password2"
 const CHANNELS = (() => {
-  const channelStr = process.env.CHANNELS || "";
+  const channelStr = process.env.CHANNELS || "test:test";
   const map = new Map();
   if (channelStr) {
     const pairs = channelStr.split("|");
