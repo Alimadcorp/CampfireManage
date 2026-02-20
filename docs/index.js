@@ -1,14 +1,29 @@
 const WebSocket = require("ws");
 const Redis = require("ioredis");
 
-const SCANNER_PASSWORD = "29678292";
-const LISTENER_PASSWORD = "24908812";
 const wss = new WebSocket.Server({ port: 8080 });
-
 const redis = new Redis(process.env.UPSTASH_REDIS_URL);
 
-const scanners = new Map(); // Store { ws, metadata }
-const listeners = new Set();
+// Parse channels from environment: CHANNELS="channel1:password1|channel2:password2"
+const CHANNELS = (() => {
+  const channelStr = process.env.CHANNELS || "";
+  const map = new Map();
+  if (channelStr) {
+    const pairs = channelStr.split("|");
+    for (const pair of pairs) {
+      const [channel, password] = pair.split(":");
+      if (channel && password) {
+        map.set(channel, password);
+      }
+    }
+  }
+  return map;
+})();
+
+console.log(`Loaded ${CHANNELS.size} channels from CHANNELS env var`);
+
+const scanners = new Map(); // Store { ws, metadata, channel }
+const listeners = new Map(); // Store { ws, channel } indexed by WebSocket
 
 function color(e, c = 0) {
   const l = ["grey", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
@@ -17,24 +32,34 @@ function color(e, c = 0) {
   return `\x1b[3${c}m${e}\x1b[0m`;
 }
 
-function broadcastOnlineDevices() {
-  const devices = Array.from(scanners.keys());
+function broadcastOnlineDevices(channel) {
+  const devices = [];
   const metadataMap = {};
+  
   scanners.forEach((val, key) => {
-    metadataMap[key] = val.metadata;
+    if (val.channel === channel) {
+      devices.push(key);
+      metadataMap[key] = val.metadata;
+    }
   });
 
   const payload = JSON.stringify({ type: "online_devices", devices, metadataMap });
-  listeners.forEach((l) => {
-    if (l.readyState === WebSocket.OPEN) l.send(payload);
+  listeners.forEach((listenerData, listenerWs) => {
+    if (listenerData.channel === channel && listenerWs.readyState === WebSocket.OPEN) {
+      listenerWs.send(payload);
+    }
   });
 }
 
-function broadcastListenerCount() {
-  const count = listeners.size;
-  listeners.forEach((l) => {
-    if (l.readyState === WebSocket.OPEN) {
-      l.send(JSON.stringify({ type: "listener_count", count }));
+function broadcastListenerCount(channel) {
+  let count = 0;
+  listeners.forEach((listenerData) => {
+    if (listenerData.channel === channel) count++;
+  });
+  
+  listeners.forEach((listenerData, listenerWs) => {
+    if (listenerData.channel === channel && listenerWs.readyState === WebSocket.OPEN) {
+      listenerWs.send(JSON.stringify({ type: "listener_count", count }));
     }
   });
 }
@@ -60,6 +85,7 @@ wss.on("connection", (ws, req) => {
   const clientIp = (req.socket.remoteAddress || "0.0.0.0").replace("::ffff:", "");
   let authed = false;
   let role = null;
+  let channel = null;
   let userScannerId = null;
   let startTime = null;
   let currentMetadata = {};
@@ -83,62 +109,50 @@ wss.on("connection", (ws, req) => {
     }
 
     if (data.type === "auth") {
-      if (data.password === SCANNER_PASSWORD) {
-        authed = true;
-        role = "scanner";
+      const channelId = data.channel;
+      const password = data.password;
 
-        userScannerId = data.scannerId || "Unknown User";
-        startTime = new Date().toISOString();
-
-        currentMetadata = {
-          ...(data.metadata || {}),
-          scanner_user_id: userScannerId,
-          last_connected: startTime,
-          current_session_scans: 0,
-          name: data.metadata?.device || "Unknown Device",
-          ip: clientIp
-        };
-
-        try {
-          await redis.hset(`scanner:${clientIp}`, currentMetadata);
-          await redis.sadd("scanners_ips", clientIp);
-        } catch (e) {
-          console.error("Redis Error (Auth):", e.message);
-        }
-
-        scanners.set(clientIp, { ws, metadata: currentMetadata });
-        console.log(color(`Scanner Connected | User: ${userScannerId} | IP: ${clientIp}`, "green"));
-        safeSend(ws, { type: "auth", status: "success", role: "scanner", ip: clientIp, userId: userScannerId });
-
-        broadcastOnlineDevices();
+      // Verify channel exists and password is correct
+      if (!channelId || !CHANNELS.has(channelId)) {
+        return safeSend(ws, { type: "auth", status: "fail", error: "Channel does not exist" });
       }
-      else if (data.password === LISTENER_PASSWORD) {
-        authed = true;
-        role = "listener";
-        listeners.add(ws);
-        console.log(color(`Listener connected from ${clientIp}`, "yellow"));
 
-        broadcastOnlineDevices();
-        safeSend(ws, { type: "auth", status: "success", role: "listener" });
-        broadcastListenerCount();
-
-        try {
-          const history = await redis.lrange("scanned_codes", -50, -1);
-          if (history && history.length > 0) {
-            const parsedHistory = [];
-            for (const s of history) {
-              try {
-                parsedHistory.push(JSON.parse(s));
-              } catch (e) { }
-            }
-            safeSend(ws, { type: "history", scans: parsedHistory });
-          }
-        } catch (e) {
-          console.error("Redis Error (History):", e.message);
-        }
+      if (CHANNELS.get(channelId) !== password) {
+        return safeSend(ws, { type: "auth", status: "fail", error: "Invalid password" });
       }
-      else safeSend(ws, { type: "auth", status: "fail" });
 
+      // Determine role based on password match
+      authed = true;
+      channel = channelId;
+      role = "scanner"; // For now, all auth are scanners. Listeners would have different role logic if needed
+
+      userScannerId = data.scannerId || "Unknown User";
+      startTime = new Date().toISOString();
+
+      currentMetadata = {
+        ...(data.metadata || {}),
+        scanner_user_id: userScannerId,
+        last_connected: startTime,
+        current_session_scans: 0,
+        name: data.metadata?.device || "Unknown Device",
+        ip: data.metadata?.ip || clientIp
+      };
+
+      try {
+        // Store device info in channel devices key
+        const devicesKey = `channel:${channel}:devices`;
+        const deviceId = `${userScannerId}:${clientIp}`;
+        await redis.hset(devicesKey, deviceId, JSON.stringify(currentMetadata));
+      } catch (e) {
+        console.error("Redis Error (Auth):", e.message);
+      }
+
+      scanners.set(clientIp, { ws, metadata: currentMetadata, channel });
+      console.log(color(`Scanner Connected | Channel: ${channel} | User: ${userScannerId} | IP: ${clientIp}`, "green"));
+      safeSend(ws, { type: "auth", status: "success", role: "scanner", channel, userId: userScannerId });
+
+      broadcastOnlineDevices(channel);
+      broadcastListenerCount(channel);
       return;
     }
 
@@ -152,7 +166,6 @@ wss.on("connection", (ws, req) => {
         ip: clientIp,
         data: data.data || "",
         color: data.color || "grey",
-        scannerInfo: currentMetadata
       };
 
       const num = Number.isInteger(data.num) ? data.num : (typeof data.num === 'string' && /^[0-9]+$/.test(data.num) ? parseInt(data.num, 10) : null);
@@ -161,17 +174,20 @@ wss.on("connection", (ws, req) => {
       console.log(`${color(record.time, "grey")} ${color(userScannerId, "cyan")} (${color(clientIp, "blue")}): ${color(record.data, record.color)}${num !== null ? (' #' + num) : ''}`);
 
       try {
-        if (num !== null) {
-          const packetKey = `scanner:${clientIp}:packets`;
-          await redis.hset(packetKey, `${num}`, JSON.stringify(record));
-        }
-        await redis.rpush("scanned_codes", JSON.stringify(record));
-        await redis.hincrby(`scanner:${clientIp}`, "current_session_scans", 1);
+        // Store scan in channel scans key
+        const scansKey = `channel:${channel}:scans`;
+        const scanId = `${Date.now()}:${num || Math.random()}`;
+        await redis.hset(scansKey, scanId, JSON.stringify(record));
       } catch (e) {
         console.error("Redis Error (Scan):", e.message);
       }
 
-      listeners.forEach((l) => safeSend(l, { type: "scan", ...record }));
+      // Broadcast to all listeners of this channel
+      listeners.forEach((listenerData, l) => {
+        if (listenerData.channel === channel) {
+          safeSend(l, { type: "scan", ...record });
+        }
+      });
 
       if (num !== null) {
         safeSend(ws, { type: "received", num: num, status: "success" });
@@ -184,7 +200,7 @@ wss.on("connection", (ws, req) => {
       if (!target || reqNum == null) return;
 
       const scannerEntry = scanners.get(target);
-      if (scannerEntry) {
+      if (scannerEntry && scannerEntry.channel === channel) {
         safeSend(scannerEntry.ws, { type: "resend", num: reqNum });
       }
     }
@@ -194,25 +210,23 @@ wss.on("connection", (ws, req) => {
     if (role === "scanner") {
       scanners.delete(clientIp);
       try {
-        const stats = await redis.hgetall(`scanner:${clientIp}`);
-        if (stats && Object.keys(stats).length > 0) {
-          const historyEntry = {
-            userId: userScannerId,
-            connectedAt: startTime,
-            disconnectedAt: new Date().toISOString(),
-            scans: parseInt(stats.current_session_scans) || 0,
-            device: stats.name || "Unknown"
-          };
-          await redis.rpush(`scanner:${clientIp}:sessions`, JSON.stringify(historyEntry));
-        }
+        // Remove device from channel devices key
+        const devicesKey = `channel:${channel}:devices`;
+        const deviceId = `${userScannerId}:${clientIp}`;
+        await redis.hdel(devicesKey, deviceId);
       } catch (e) {
         console.error("Redis Error (Close):", e.message);
       }
-      console.log(color(`Scanner Disconnected | User: ${userScannerId} | IP: ${clientIp}`, "red"));
-      broadcastOnlineDevices();
+      console.log(color(`Scanner Disconnected | Channel: ${channel} | User: ${userScannerId} | IP: ${clientIp}`, "red"));
+      if (channel) {
+        broadcastOnlineDevices(channel);
+        broadcastListenerCount(channel);
+      }
     } else if (role === "listener") {
       listeners.delete(ws);
-      broadcastListenerCount();
+      if (channel) {
+        broadcastListenerCount(channel);
+      }
     }
   });
 
